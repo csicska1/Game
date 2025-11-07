@@ -63,19 +63,45 @@ function update(dt){
 }
 
 function draw(){
-  x.fillStyle="#000";
+  // iPhone Dark háttér: mély, lágy gradient
+  let g = x.createLinearGradient(0,0,0,cfg.h);
+  g.addColorStop(0,"#000000");
+  g.addColorStop(1,"#111111");
+  x.fillStyle = g;
   x.fillRect(0,0,cfg.w,cfg.h);
 
-  x.fillStyle="#30d158";
-  x.fillRect(p.x,p.y,p.w,p.h);
+  // Finom háttér "fény" kör a player körül
+  let glow = x.createRadialGradient(p.x+p.w/2, p.y+p.h/2, 10, p.x+p.w/2, p.y+p.h/2, 140);
+  glow.addColorStop(0,"rgba(48,209,88,0.25)");
+  glow.addColorStop(1,"rgba(0,0,0,0)");
+  x.fillStyle = glow;
+  x.fillRect(0,0,cfg.w,cfg.h);
 
-  x.fillStyle="#ff453a";
-  obs.forEach(o=>x.fillRect(o.x,o.y,o.w,o.h));
+  // Player: kerekített, lágy glow
+  x.shadowBlur = 18;
+  x.shadowColor = "rgba(48,209,88,0.8)";
+  x.fillStyle = "#30d158";
+  x.beginPath();
+  x.roundRect(p.x,p.y,p.w,p.h,8);
+  x.fill();
 
-  x.fillStyle="#fff";
-  x.font="18px sans-serif";
-  x.fillText("Pont: "+score,10,24);
+  // Obstacles: élő, piros izzás
+  x.shadowBlur = 14;
+  x.shadowColor = "rgba(255,69,58,0.9)";
+  x.fillStyle = "#ff453a";
+  obs.forEach(o=>{
+    x.beginPath();
+    x.roundRect(o.x,o.y,o.w,o.h,6);
+    x.fill();
+  });
+
+  // HUD szöveg: finom, nem ordít
+  x.shadowBlur = 0;
+  x.fillStyle = "rgba(255,255,255,0.85)";
+  x.font = "18px -apple-system, BlinkMacSystemFont, SF Pro Display, sans-serif";
+  x.fillText("Pont: "+score, 12, 26);
 }
+
 
 function loop(t){
   if(!last)last=t;
