@@ -2,128 +2,278 @@
 <html lang="hu">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>Clean Dodge</title>
-
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>UVB-76 stílusú AM szimulátor</title>
 <style>
-:root {
-  --bg:#000;
-  --surface2:#181818;
-  --text:#fff;
-  font-family:-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-}
-
-html,body{
-  margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
-  -webkit-tap-highlight-color:transparent;
-}
-
-canvas{
-  display:block;
-  margin:0 auto;
-  background:var(--surface2);
-  border-radius:14px;
-  box-shadow:0 0 30px rgba(0,0,0,.4);
-}
+  :root{--bg:#0b0b0f;--panel:#0f1720;--accent:#8fb3ff;--muted:#9aa7b2}
+  html,body{height:100%;margin:0;font-family:Inter,Segoe UI,system-ui,Arial;background:linear-gradient(180deg,#020206 0%, #071021 60%);color:#e6eef6}
+  .wrap{max-width:980px;margin:28px auto;padding:20px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.02));border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 10px;font-weight:600;letter-spacing:0.6px}
+  p.lead{margin:0 0 18px;color:var(--muted)}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .card{background:var(--panel);padding:12px;border-radius:8px;flex:1;min-width:220px}
+  .row{display:flex;gap:8px;align-items:center}
+  label{font-size:12px;color:var(--muted);flex:1}
+  input[type=range]{width:100%}
+  button{background:var(--accent);border:none;color:#03233a;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+  .status{font-family:monospace;background:#071425;padding:8px;border-radius:6px;margin-top:10px}
+  canvas{width:100%;height:160px;background:#020816;border-radius:8px;display:block}
+  .small{font-size:12px;color:var(--muted);margin-top:8px}
+  footer{margin-top:12px;color:var(--muted);font-size:12px}
+  .toggle{display:inline-flex;align-items:center;gap:8px}
 </style>
-
 </head>
 <body>
+<div class="wrap">
+  <h1>UVB-76 stílusú AM szimulátor</h1>
+  <p class="lead">Zümmögés, pulzálás, statikus zaj és néha beszéd/szám – nosztalgia rövidhullámra. 🎧</p>
 
-<canvas id="c" width="360" height="640"></canvas>
+  <div class="controls">
+    <div class="card">
+      <div class="row" style="margin-bottom:8px">
+        <button id="playBtn">Play</button>
+        <button id="stopBtn" class="ghost">Stop</button>
+        <div style="flex:1"></div>
+        <div class="toggle"><input type="checkbox" id="noiseToggle" checked><label for="noiseToggle">Zaj</label></div>
+      </div>
+
+      <label>Frekvencia (emulált): <span id="freqLabel">4625 kHz</span></label>
+      <input id="freq" type="range" min="3000" max="12000" value="4625">
+
+      <label style="margin-top:10px">Pulzus sebesség (Hz): <span id="pulseLabel">1.8</span></label>
+      <input id="pulse" type="range" min="0.2" max="6" step="0.1" value="1.8">
+
+      <label style="margin-top:10px">Buzzer hangmagasság (Hz): <span id="toneLabel">4500</span></label>
+      <input id="tone" type="range" min="300" max="8000" value="4500">
+
+      <div style="margin-top:10px" class="row">
+        <div class="toggle"><input type="checkbox" id="speechToggle"><label for="speechToggle">Szintetikus számok / beszéd</label></div>
+        <div style="flex:1"></div>
+        <button id="pingBtn" class="ghost">Küld "ping"</button>
+      </div>
+
+      <div class="status" id="status">Leállítva</div>
+    </div>
+
+    <div class="card">
+      <label>Spektrum / hullámforma</label>
+      <canvas id="vis"></canvas>
+      <div class="small">Vizualizáció: frekvenciaelemzés + hullámforma. A zaj és a pulzus formálja a képet.</div>
+    </div>
+  </div>
+
+  <footer>Ez csak szimuláció. Nem sugárzunk, nem zavarunk semmit. Csak hang és hangulat. 🛰️</footer>
+</div>
 
 <script>
-const cfg={w:360,h:640,pw:42,ph:18,spd:5};
-const c=document.getElementById("c"),x=c.getContext("2d");
+(async function(){
+  // Rövid, letisztult WebAudio szintetizátor, AM pulzussal és zajjal.
+  let audioCtx, masterGain, osc, lfo, noiseNode, noiseGain, analyser, playing=false;
+  const playBtn = document.getElementById('playBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const freqSlider = document.getElementById('freq');
+  const freqLabel = document.getElementById('freqLabel');
+  const pulseSlider = document.getElementById('pulse');
+  const pulseLabel = document.getElementById('pulseLabel');
+  const toneSlider = document.getElementById('tone');
+  const toneLabel = document.getElementById('toneLabel');
+  const noiseToggle = document.getElementById('noiseToggle');
+  const speechToggle = document.getElementById('speechToggle');
+  const pingBtn = document.getElementById('pingBtn');
+  const status = document.getElementById('status');
 
-const p={x:cfg.w/2-21,y:cfg.h-50,w:42,h:18,v:0};
-let obs=[],input={l:false,r:false},score=0,run=true,last=0;
+  // viz
+  const canvas = document.getElementById('vis');
+  const ctx = canvas.getContext('2d');
+  function resizeCanvas(){ canvas.width = canvas.clientWidth * devicePixelRatio; canvas.height = canvas.clientHeight * devicePixelRatio; ctx.scale(devicePixelRatio, devicePixelRatio); }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
 
-function spawn(){
-  const w=20+Math.random()*50,ox=Math.random()*(cfg.w-w);
-  obs.push({x:ox,y:-40,w:h=w,h:12+Math.random()*20,s:2+Math.random()*3});
-}
-
-function collide(a,b){
-  return !(a.x+a.w<b.x||b.x+b.w<a.x||a.y+a.h<b.y||b.y+b.h<a.y);
-}
-
-function update(dt){
-  if(input.l)p.v=-cfg.spd; else if(input.r)p.v=cfg.spd; else p.v=0;
-  p.x+=p.v; p.x=Math.max(0,Math.min(cfg.w-p.w,p.x));
-
-  if(Math.random()<0.01)spawn();
-
-  for(let i=obs.length;i--;){
-    let o=obs[i];
-    o.y+=o.s;
-    if(collide(p,o)){run=false;alert("Vesztettél! Pont: "+score);location.reload();}
-    if(o.y>cfg.h){obs.splice(i,1);score++;}
+  function updateLabels(){
+    freqLabel.textContent = Math.round(freqSlider.value) + ' kHz';
+    pulseLabel.textContent = parseFloat(pulseSlider.value).toFixed(1);
+    toneLabel.textContent = toneSlider.value + ' Hz';
   }
-}
+  updateLabels();
+  [freqSlider,pulseSlider,toneSlider].forEach(el => el.addEventListener('input', updateLabels));
 
-function draw(){
-  // iPhone Dark háttér: mély, lágy gradient
-  let g = x.createLinearGradient(0,0,0,cfg.h);
-  g.addColorStop(0,"#000000");
-  g.addColorStop(1,"#111111");
-  x.fillStyle = g;
-  x.fillRect(0,0,cfg.w,cfg.h);
+  function setupAudio(){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain(); masterGain.gain.value = 0.6;
+    analyser = audioCtx.createAnalyser(); analyser.fftSize = 2048;
+    masterGain.connect(analyser);
+    analyser.connect(audioCtx.destination);
 
-  // Finom háttér "fény" kör a player körül
-  let glow = x.createRadialGradient(p.x+p.w/2, p.y+p.h/2, 10, p.x+p.w/2, p.y+p.h/2, 140);
-  glow.addColorStop(0,"rgba(48,209,88,0.25)");
-  glow.addColorStop(1,"rgba(0,0,0,0)");
-  x.fillStyle = glow;
-  x.fillRect(0,0,cfg.w,cfg.h);
+    // buzzer oscillator
+    osc = audioCtx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = toneSlider.value;
 
-  // Player: kerekített, lágy glow
-  x.shadowBlur = 18;
-  x.shadowColor = "rgba(48,209,88,0.8)";
-  x.fillStyle = "#30d158";
-  x.beginPath();
-  x.roundRect(p.x,p.y,p.w,p.h,8);
-  x.fill();
+    // LFO for amplitude modulation (pulzus)
+    lfo = audioCtx.createOscillator();
+    lfo.type = 'square'; // pulzáló hatás
+    lfo.frequency.value = pulseSlider.value;
 
-  // Obstacles: élő, piros izzás
-  x.shadowBlur = 14;
-  x.shadowColor = "rgba(255,69,58,0.9)";
-  x.fillStyle = "#ff453a";
-  obs.forEach(o=>{
-    x.beginPath();
-    x.roundRect(o.x,o.y,o.w,o.h,6);
-    x.fill();
+    const lfoGain = audioCtx.createGain(); lfoGain.gain.value = 0.9; // AM mélység
+    lfo.connect(lfoGain);
+    const ampGain = audioCtx.createGain(); ampGain.gain.value = 0.0; // vezérelt
+
+    // kombináljuk: osc -> ampGain -> masterGain
+    osc.connect(ampGain);
+    ampGain.connect(masterGain);
+
+    // LFO vezérli ampGain
+    lfoGain.connect(ampGain.gain);
+
+    // zaj
+    noiseGain = audioCtx.createGain(); noiseGain.gain.value = noiseToggle.checked ? 0.12 : 0.0;
+    noiseNode = createNoiseNode(audioCtx);
+    noiseNode.connect(noiseGain);
+    noiseGain.connect(masterGain);
+
+    // enyhe filtering, hogy shortwave-érzés legyen
+    const highpass = audioCtx.createBiquadFilter(); highpass.type='highpass'; highpass.frequency.value = 300;
+    const lowpass = audioCtx.createBiquadFilter(); lowpass.type='lowpass'; lowpass.frequency.value = 9000;
+    masterGain.disconnect();
+    masterGain.connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(analyser);
+    lowpass.connect(audioCtx.destination);
+
+    // start
+    osc.start();
+    lfo.start();
+  }
+
+  function createNoiseNode(context){
+    const bufferSize = 2 * context.sampleRate;
+    const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++){
+      data[i] = (Math.random() * 2 - 1) * 0.6;
+    }
+    const node = context.createBufferSource();
+    node.buffer = buffer;
+    node.loop = true;
+    node.start(0);
+    return node;
+  }
+
+  function startAudio(){
+    if (playing) return;
+    if (!audioCtx) setupAudio();
+    // sync params
+    osc.frequency.setValueAtTime(toneSlider.value, audioCtx.currentTime);
+    lfo.frequency.setValueAtTime(pulseSlider.value, audioCtx.currentTime);
+    noiseGain.gain.setValueAtTime(noiseToggle.checked ? 0.12 : 0.0, audioCtx.currentTime);
+    // make sure context resumed
+    audioCtx.resume();
+    playing = true;
+    status.textContent = 'Lejátszás: aktív — zümmögés és zaj.';
+    animate();
+  }
+
+  function stopAudio(){
+    if (!playing) return;
+    // fade out and suspend
+    masterGain.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + 0.2);
+    setTimeout(()=>{ audioCtx.suspend(); masterGain.gain.value = 0.6; }, 250);
+    playing = false;
+    status.textContent = 'Leállítva';
+  }
+
+  playBtn.addEventListener('click', ()=>{
+    try { startAudio(); } catch(e){ console.error(e); alert('Böngésződ nem támogatja a WebAudio API-t teljesen.'); }
+  });
+  stopBtn.addEventListener('click', stopAudio);
+
+  // param frissítések
+  toneSlider.addEventListener('input', ()=>{
+    if (osc && audioCtx) osc.frequency.setValueAtTime(toneSlider.value, audioCtx.currentTime);
+    updateLabels();
+  });
+  pulseSlider.addEventListener('input', ()=>{
+    if (lfo && audioCtx) lfo.frequency.setValueAtTime(pulseSlider.value, audioCtx.currentTime);
+    updateLabels();
+  });
+  freqSlider.addEventListener('input', ()=>{
+    // csak vizuális: frekvencia címke
+    updateLabels();
+  });
+  noiseToggle.addEventListener('change', ()=>{
+    if (noiseGain && audioCtx) noiseGain.gain.setValueAtTime(noiseToggle.checked ? 0.12 : 0.0, audioCtx.currentTime);
   });
 
-  // HUD szöveg: finom, nem ordít
-  x.shadowBlur = 0;
-  x.fillStyle = "rgba(255,255,255,0.85)";
-  x.font = "18px -apple-system, BlinkMacSystemFont, SF Pro Display, sans-serif";
-  x.fillText("Pont: "+score, 12, 26);
-}
+  // "ping" küldés: rövid erősödés + (ha engedélyezve) speechSynthesis számfelmondás
+  pingBtn.addEventListener('click', ()=>{
+    if (!audioCtx) startAudio();
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+    const pingGain = audioCtx.createGain();
+    masterGain.connect(pingGain);
+    pingGain.connect(audioCtx.destination);
+    pingGain.gain.setValueAtTime(0.0, now);
+    pingGain.gain.linearRampToValueAtTime(1.2, now + 0.01);
+    pingGain.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
+    setTimeout(()=>{ try{ pingGain.disconnect(); }catch(e){} }, 1200);
 
+    if (speechToggle.checked && 'speechSynthesis' in window){
+      const n = Math.floor(Math.random()*900) + 100;
+      const utter = new SpeechSynthesisUtterance(String(n));
+      utter.lang = 'ru-RU'; // hangulat
+      utter.rate = 0.95;
+      window.speechSynthesis.speak(utter);
+    }
+  });
 
-function loop(t){
-  if(!last)last=t;
-  const dt=t-last;last=t;
-  if(run)update(dt),draw();
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
+  // egyszerű animáció/vizualizáció
+  function animate(){
+    if (!analyser) return;
+    requestAnimationFrame(animate);
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    ctx.clearRect(0,0,w,h);
 
-document.addEventListener("touchstart",e=>{
-  const x=e.touches[0].clientX;
-  input.l=x<window.innerWidth/2;
-  input.r=x>=window.innerWidth/2;
-});
-document.addEventListener("touchend",()=>{input.l=false;input.r=false;});
+    // frekvencia adat
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(freqData);
+
+    // hullámforma
+    const wave = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(wave);
+
+    // draw spectrum (top)
+    const barCount = 120;
+    const barW = (w - 10) / barCount;
+    for (let i=0;i<barCount;i++){
+      const idx = Math.floor(i / barCount * freqData.length);
+      const v = freqData[idx] / 255;
+      const barH = v * (h*0.45);
+      ctx.fillStyle = `rgba(143,179,255,${0.08 + v*0.6})`;
+      ctx.fillRect(6 + i*barW, h*0.02 + (h*0.45 - barH), barW*0.85, barH);
+    }
+
+    // draw waveform (bottom)
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(143,179,255,0.9)';
+    ctx.beginPath();
+    const step = Math.floor(wave.length / w);
+    for (let i=0;i<w;i++){
+      const v = wave[i*step] / 128.0 - 1.0;
+      const y = h*0.6 + (v * h*0.18);
+      if (i===0) ctx.moveTo(i,y); else ctx.lineTo(i,y);
+    }
+    ctx.stroke();
+  }
+
+  // kezdő vizuális állapot
+  ctx.font = '14px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.06)';
+  ctx.fillText('Üres. Nyomj Play-t.', 16, 80);
+
+  // automatikus start tiltások miatt Start gombra kötünk
+})();
 </script>
-
-<script>
-if("serviceWorker" in navigator){
-  navigator.serviceWorker.register("./sw.js");
-}
-</script>
-
 </body>
 </html>
